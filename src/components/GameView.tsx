@@ -1126,13 +1126,15 @@ function NetworkedGameView({
             }
           }
 
-          // Ball bounce off nothing — use refs for current paddle position
+          // Ball bounce off nothing — use refs for current paddle position.
+          // Server uses dynamic hit tolerance up to 4.5 units, so match that.
+          const HIT_TOL = 4.5;
           for (const ball of rendered.balls) {
             const pb = prevSnap.balls.find((b) => b.id === ball.id);
             if (!pb) continue;
             if (pb.vx < 0 && ball.vx > 0) {
               const padY = predictedPaddleRef.current;
-              const ballInPaddle = ball.y >= padY - 2 && ball.y <= padY + PADDLE_SIZE + 2;
+              const ballInPaddle = ball.y >= padY - HIT_TOL && ball.y <= padY + PADDLE_SIZE + HIT_TOL;
               if (!ballInPaddle) {
                 console.warn(`[PONG] Ball bounced LEFT but paddle not covering! ball.y=${ball.y.toFixed(1)} pad=${padY.toFixed(1)}-${(padY + PADDLE_SIZE).toFixed(1)} serverPad=${serverPaddleRef.current.toFixed(1)}`);
               }
