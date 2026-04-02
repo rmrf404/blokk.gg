@@ -48,12 +48,17 @@ const INITIAL_PADDLE_Y = ARENA_HEIGHT / 2 - PADDLE_SIZE / 2;
 
 /**
  * Fixed interpolation delay in milliseconds.
- * The server now broadcasts at 60 Hz, so we only keep roughly one snapshot of
- * delay. This keeps the world visually aligned with the local paddle.
+ * ~3 snapshots of buffer at 60 Hz broadcast. Smooths opponent/ball rendering
+ * through network jitter. The 50 ms of added visual latency is imperceptible
+ * for Pong.
  */
-const INTERPOLATION_DELAY_MS = 18;
-const SELF_PADDLE_BLEND_DISTANCE = 1.25;
-const SELF_PADDLE_SNAP_DISTANCE = 10;
+const INTERPOLATION_DELAY_MS = 50;
+
+/** Server tick duration — must match TICK_MS on the server. */
+const TICK_MS = 1000 / 60;
+
+/** EMA smoothing factor for server clock offset estimation. */
+const CLOCK_OFFSET_ALPHA = 0.1;
 
 interface ArenaSnapshot {
   elapsedMs: number;
@@ -727,7 +732,9 @@ function NetworkedGameView({
   const snapshotBufferRef = useRef<TimedSnapshot[]>([]);
   const renderTimeRef = useRef<number | null>(null);
   const gameActiveRef = useRef(false);
-  const serverClockRef = useRef<{ serverTimeMs: number; receivedAtMs: number } | null>(null);
+
+  // --- Server clock (EMA-smoothed offset) ------------------------------------
+  const clockOffsetRef = useRef<number | null>(null);
 
   // --- Own paddle prediction ---------------------------------------------------
   const serverPaddleRef = useRef(INITIAL_PADDLE_Y);
@@ -735,6 +742,11 @@ function NetworkedGameView({
   const predictedTargetPaddleRef = useRef<number | null>(null);
   const predictedDirRef = useRef<-1 | 0 | 1>(0);
   const touchDraggingRef = useRef(false);
+
+  // --- Input replay reconciliation (Gambetta) --------------------------------
+  const unackedInputsRef = useRef<Array<{ seq: number; action: InputAction }>>(
+    [],
+  );
 
   // --- React state -------------------------------------------------------------
   const [countdown, setCountdown] = useState(-1);
@@ -766,11 +778,10 @@ function NetworkedGameView({
   }, []);
 
   const estimateServerTimeMs = useCallback(() => {
-    const clock = serverClockRef.current;
-    if (!clock) {
+    if (clockOffsetRef.current === null) {
       return undefined;
     }
-    return clock.serverTimeMs + (performance.now() - clock.receivedAtMs);
+    return performance.now() + clockOffsetRef.current;
   }, []);
 
   const flushQueuedPaddlePosition = useCallback(() => {
@@ -809,12 +820,13 @@ function NetworkedGameView({
     queuedPaddleLeftRef.current = null;
     snapshotBufferRef.current = [];
     renderTimeRef.current = null;
-    serverClockRef.current = null;
+    clockOffsetRef.current = null;
     serverPaddleRef.current = INITIAL_PADDLE_Y;
     predictedPaddleRef.current = INITIAL_PADDLE_Y;
     predictedTargetPaddleRef.current = null;
     predictedDirRef.current = 0;
     touchDraggingRef.current = false;
+    unackedInputsRef.current = [];
     clearQueuedPaddleFlush();
     setSelfPaddleLeftOverride(INITIAL_PADDLE_Y);
   }, [clearQueuedPaddleFlush]);
@@ -891,19 +903,44 @@ function NetworkedGameView({
             opponent: msg.state.opponent,
             balls: msg.state.balls,
           };
-          serverClockRef.current = {
-            serverTimeMs: msg.state.serverTimeMs,
-            receivedAtMs: performance.now(),
-          };
+
+          // EMA-smoothed server clock offset
+          const rawOffset = msg.state.serverTimeMs - performance.now();
+          if (clockOffsetRef.current === null) {
+            clockOffsetRef.current = rawOffset;
+          } else {
+            clockOffsetRef.current += CLOCK_OFFSET_ALPHA * (rawOffset - clockOffsetRef.current);
+          }
 
           serverPaddleRef.current = snap.self.paddleY;
-          const hasLocalPrediction = predictedTargetPaddleRef.current !== null || predictedDirRef.current !== 0;
-          const delta = snap.self.paddleY - predictedPaddleRef.current;
-          const absDelta = Math.abs(delta);
-          if (!hasLocalPrediction || absDelta >= SELF_PADDLE_SNAP_DISTANCE) {
-            predictedPaddleRef.current = snap.self.paddleY;
-          } else if (absDelta > SELF_PADDLE_BLEND_DISTANCE) {
-            predictedPaddleRef.current += delta * 0.3;
+
+          // --- Gambetta-style input replay reconciliation ---
+          // Prune acknowledged inputs
+          unackedInputsRef.current = unackedInputsRef.current.filter(
+            (input) => input.seq > msg.state.lastProcessedInputSeq,
+          );
+
+          if (predictedTargetPaddleRef.current !== null) {
+            // Mobile touch: absolute positioning — use pending target or server
+            if (pendingPaddleUpdateRef.current) {
+              predictedPaddleRef.current = predictedPaddleRef.current;
+            } else {
+              predictedPaddleRef.current = snap.self.paddleY;
+            }
+          } else {
+            // Keyboard: replay unacknowledged inputs on top of server state
+            let reconciledY = snap.self.paddleY;
+            let dir: -1 | 0 | 1 = 0;
+            for (const input of unackedInputsRef.current) {
+              dir = applyPredictedInputDirection(dir, input.action);
+              reconciledY = clamp(
+                reconciledY + dir * PADDLE_SPEED * (TICK_MS / 1000),
+                0,
+                ARENA_HEIGHT - PADDLE_SIZE,
+              );
+            }
+            predictedPaddleRef.current = reconciledY;
+            predictedDirRef.current = dir;
           }
           setSelfPaddleLeftOverride(predictedPaddleRef.current);
 
@@ -1076,6 +1113,7 @@ function NetworkedGameView({
     predictedTargetPaddleRef.current = null;
     predictedDirRef.current = applyPredictedInputDirection(predictedDirRef.current, action);
     const seq = seqRef.current++;
+    unackedInputsRef.current.push({ seq, action });
     ws.send(JSON.stringify({
       type: "input",
       seq,
@@ -1089,6 +1127,7 @@ function NetworkedGameView({
     if (countdown > 0 || waiting || winner || ws?.readyState !== WebSocket.OPEN) return;
     predictedDirRef.current = 0;
     predictedTargetPaddleRef.current = paddleLeft;
+    unackedInputsRef.current = [];
     queuedPaddleLeftRef.current = paddleLeft;
     schedulePaddlePositionFlush();
   }, [countdown, schedulePaddlePositionFlush, waiting, winner]);

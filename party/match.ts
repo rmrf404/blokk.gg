@@ -16,10 +16,13 @@ import type {
 } from "../src/multiplayer/types";
 
 const TICK_MS = 1000 / 60;
-const MAX_ROLLBACK_MS = 220;
+const MAX_ROLLBACK_MS = 100;
 const MAX_ROLLBACK_FRAMES = Math.ceil(MAX_ROLLBACK_MS / TICK_MS);
 const HISTORY_FRAMES = MAX_ROLLBACK_FRAMES + 8;
-const INPUT_LEAD_MS = TICK_MS * 2;
+const INPUT_LEAD_MS = TICK_MS * 3;
+/** Inputs targeting frames within this many frames of the current frame are
+ *  redirected to the next tick instead of triggering a full rollback. */
+const GRACE_FRAMES = 3;
 
 type ScheduledCommand =
   | { slot: PlayerSlot; frame: number; type: "input"; seq: number; action: InputAction }
@@ -159,6 +162,12 @@ export class AuthoritativeMatch {
   }
 
   private scheduleCommand(command: ScheduledCommand) {
+    // Redirect near-past inputs to the next tick instead of rolling back.
+    // This eliminates most rollbacks caused by inputs arriving just barely late.
+    if (command.frame <= this.serverFrame && this.serverFrame - command.frame <= GRACE_FRAMES) {
+      command.frame = this.serverFrame + 1;
+    }
+
     const existing = this.scheduledCommands.get(command.frame);
     if (existing) {
       existing.push(command);
