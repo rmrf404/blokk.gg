@@ -188,9 +188,8 @@ export class Gameroom extends Server {
 
   private determineIsRanked(): boolean {
     const types = this.players.map((p) => p.playerType);
-    if (types.includes("cpu")) return false;
-    if (types.every((t) => t === "guest" || t === null)) return false;
-    return types.some((t) => t === "auth");
+    // Only auth-vs-auth matches are ranked
+    return types.every((t) => t === "auth");
   }
 
   private getOpponent(conn: Connection): Player | undefined {
@@ -333,9 +332,8 @@ export class Gameroom extends Server {
       const topType = topData.playerType;
       const bottomType = bottomData.playerType;
 
-      // Skip DB write if both guests or CPU involved
-      if (topType === "cpu" || bottomType === "cpu") return;
-      if (topType === "guest" && bottomType === "guest") return;
+      // Only record auth-vs-auth matches — skip CPU, guest, and mixed matches
+      if (topType !== "auth" || bottomType !== "auth") return;
 
       const supabase = createPartySupabase(this.env);
       if (!supabase) return;
@@ -376,58 +374,36 @@ export class Gameroom extends Server {
         duration_seconds: durationSeconds,
       });
 
-      // Update each auth player's stats
-      const updates: Array<{
-        row: { id: string; wins: number; losses: number; games_vs_guests: number };
-        newElo: number;
-        won: boolean;
-        opponentIsGuest: boolean;
-      }> = [];
+      // Update each auth player's stats (both are guaranteed auth at this point)
+      if (!topRow || !bottomRow) return;
 
-      if (topRow) {
-        updates.push({
-          row: topRow,
-          newElo: eloResult.newRatingA,
-          won: topWon,
-          opponentIsGuest: bottomType === "guest",
-        });
-      }
-      if (bottomRow) {
-        updates.push({
-          row: bottomRow,
-          newElo: eloResult.newRatingB,
-          won: !topWon,
-          opponentIsGuest: topType === "guest",
-        });
-      }
+      const updates = [
+        { row: topRow, newElo: eloResult.newRatingA, won: topWon },
+        { row: bottomRow, newElo: eloResult.newRatingB, won: !topWon },
+      ];
 
-      for (const { row, newElo, won, opponentIsGuest } of updates) {
+      for (const { row, newElo, won } of updates) {
         await supabase
           .from("players")
           .update({
             elo: newElo,
             wins: won ? row.wins + 1 : row.wins,
             losses: won ? row.losses : row.losses + 1,
-            games_vs_guests: opponentIsGuest ? row.games_vs_guests + 1 : row.games_vs_guests,
             updated_at: new Date().toISOString(),
           })
           .eq("id", row.id);
       }
 
-      // Send ELO updates to connected players
+      // Send ELO updates to connected players (both are auth)
       for (const player of this.players) {
         const isTop = player.slot === "top";
         const row = isTop ? topRow : bottomRow;
-        const oldElo = row?.elo ?? null;
-        const newElo = isTop ? eloResult.newRatingA : eloResult.newRatingB;
-        const delta = isTop ? eloResult.deltaA : eloResult.deltaB;
-        const playerType = isTop ? topType : bottomType;
 
         this.send(player.conn, {
           type: "elo_update",
-          oldElo: playerType === "auth" ? oldElo : null,
-          newElo: playerType === "auth" ? newElo : null,
-          delta: playerType === "auth" ? delta : null,
+          oldElo: row.elo,
+          newElo: isTop ? eloResult.newRatingA : eloResult.newRatingB,
+          delta: isTop ? eloResult.deltaA : eloResult.deltaB,
           isRanked,
         });
       }
