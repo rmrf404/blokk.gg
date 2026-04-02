@@ -16,6 +16,19 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "BLOKK.GG — Competitive Pong",
   description: "Fast 1v1 Pong with verified multiplayer matchmaking and instant guest play.",
+  metadataBase: new URL("https://blokk.gg"),
+  openGraph: {
+    title: "BLOKK.GG — Competitive Pong",
+    description: "Fast 1v1 Pong with verified multiplayer matchmaking and instant guest play.",
+    url: "https://blokk.gg",
+    siteName: "BLOKK.GG",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "BLOKK.GG — Competitive Pong",
+    description: "Fast 1v1 Pong with verified multiplayer matchmaking and instant guest play.",
+  },
 };
 
 export default function RootLayout({
