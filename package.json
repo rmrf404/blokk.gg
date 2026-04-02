@@ -1,0 +1,37 @@
+{
+  "name": "blokk.gg",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "party:dev": "wrangler dev",
+    "party:dev:lan": "wrangler dev --ip 0.0.0.0",
+    "party:deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@supabase/ssr": "^0.10.0",
+    "@supabase/supabase-js": "^2.101.0",
+    "next": "16.2.1",
+    "next-auth": "^5.0.0-beta.30",
+    "partyserver": "^0.4.1",
+    "partysocket": "^1.1.16",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260329.1",
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^25.5.0",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "16.2.1",
+    "tailwindcss": "^4",
+    "typescript": "^6.0.2",
+    "wrangler": "^4.78.0"
+  }
+}

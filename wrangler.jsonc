@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "blokk-partyserver",
+  "main": "party/index.ts",
+  "compatibility_date": "2025-04-01",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "Matchmaker",
+        "class_name": "Matchmaker"
+      },
+      {
+        "name": "Gameroom",
+        "class_name": "Gameroom"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Matchmaker", "Gameroom"]
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+import type { Metadata } from "next";
+import { Inter, JetBrains_Mono } from "next/font/google";
+import "./globals.css";
+
+const inter = Inter({
+  variable: "--font-inter",
+  subsets: ["latin"],
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains-mono",
+  subsets: ["latin"],
+});
+
+export const metadata: Metadata = {
+  title: "BLOKK.GG — Competitive Pong",
+  description: "Fast 1v1 Pong with verified multiplayer matchmaking and instant guest play.",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html
+      lang="en"
+      className={`${inter.variable} ${jetbrainsMono.variable} h-full`}
+    >
+      <body className="min-h-full flex flex-col bg-[#0a0a0a] text-white font-sans antialiased">
+        {children}
+        <footer className="fixed bottom-0 left-0 right-0 z-50 flex justify-center items-center gap-4 py-3 pointer-events-none">
+          <a
+            href="https://ko-fi.com/blokkgg"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="pointer-events-auto px-4 py-2 font-mono text-xs tracking-[0.2em] text-neutral-500 transition-colors hover:text-white"
+            style={{ mixBlendMode: "difference" }}
+          >
+            DONATE
+          </a>
+          <a
+            href="https://x.com/rmrf_404"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="pointer-events-auto px-4 py-2 font-mono text-xs tracking-[0.2em] text-neutral-500 transition-colors hover:text-white"
+            style={{ mixBlendMode: "difference" }}
+          >
+            X
+          </a>
+          <a
+            href="https://github.com/rmrf404/blokk.gg"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="pointer-events-auto px-4 py-2 font-mono text-xs tracking-[0.2em] text-neutral-500 transition-colors hover:text-white"
+            style={{ mixBlendMode: "difference" }}
+          >
+            GITHUB
+          </a>
+        </footer>
+      </body>
+    </html>
+  );
+}
