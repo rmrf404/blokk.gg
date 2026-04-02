@@ -45,4 +45,5 @@ CLAUDE.md
 DEPLOYING.md
 .claude/
 .wrangler/
+.dev.vars
 supabase/.temp/

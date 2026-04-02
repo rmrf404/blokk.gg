@@ -1,6 +1,6 @@
 "use client";
 
-import { signIn, useSession } from "next-auth/react";
+import { signIn, signOut, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 
@@ -58,6 +58,12 @@ export default function Home() {
               className="h-16 rounded-sm border border-white bg-white font-mono text-sm font-bold tracking-[0.28em] text-black transition-colors hover:bg-neutral-100 active:bg-neutral-200"
             >
               GO TO LOBBY
+            </button>
+            <button
+              onClick={() => signOut()}
+              className="h-10 rounded-sm border border-neutral-700 bg-black font-mono text-xs font-bold tracking-[0.28em] text-neutral-500 transition-colors hover:border-white hover:text-white"
+            >
+              SIGN OUT
             </button>
           </div>
         ) : (

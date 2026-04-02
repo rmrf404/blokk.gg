@@ -238,7 +238,10 @@ export class Gameroom extends Server {
         return;
       }
 
-      this.broadcastMatchState();
+      // Broadcast at 20 Hz (every 3rd tick) to save bandwidth
+      if (this.tickCount % 3 === 0) {
+        this.broadcastMatchState();
+      }
     }, 1000 / 60);
   }
 

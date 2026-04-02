@@ -5,6 +5,7 @@ import { shareOnX } from "@/lib/share";
 import {
   ARENA_HEIGHT,
   ARENA_WIDTH,
+  BALL_RADIUS,
   PADDLE_MARGIN,
   PADDLE_SIZE,
   PADDLE_SPEED,
@@ -40,7 +41,7 @@ interface GameViewProps {
   playerName?: string;
 }
 
-const PADDLE_POSITION_SEND_INTERVAL_MS = 1000 / 30;
+const PADDLE_POSITION_SEND_INTERVAL_MS = 1000 / 60;
 
 /** Engine initial paddle Y: centered in arena. */
 const INITIAL_PADDLE_Y = ARENA_HEIGHT / 2 - PADDLE_SIZE / 2;
@@ -683,15 +684,23 @@ function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
-/** Linearly interpolate between two arena snapshots. */
+/** Interpolate between two arena snapshots with opponent paddle velocity extrapolation. */
 function interpolateSnapshots(prev: ArenaSnapshot, next: ArenaSnapshot, t: number): ArenaSnapshot {
   const prevBalls = new Map(prev.balls.map((b) => [b.id, b]));
+  const interpOpponentY = lerp(prev.opponent.paddleY, next.opponent.paddleY, t);
+  // Extrapolate opponent paddle forward by ~16ms (one frame) to reduce visual lag
+  const opponentVelocity = next.opponent.paddleY - prev.opponent.paddleY;
+  const timeBetween = next.elapsedMs - prev.elapsedMs;
+  const extrapolatedOpponentY = timeBetween > 0
+    ? clamp(interpOpponentY + (opponentVelocity / timeBetween) * 16, 0, ARENA_HEIGHT - PADDLE_SIZE)
+    : interpOpponentY;
+
   return {
     ...next,
     elapsedMs: lerp(prev.elapsedMs, next.elapsedMs, t),
     opponent: {
       ...next.opponent,
-      paddleY: lerp(prev.opponent.paddleY, next.opponent.paddleY, t),
+      paddleY: extrapolatedOpponentY,
     },
     balls: next.balls.map((ball) => {
       const p = prevBalls.get(ball.id);
@@ -871,20 +880,17 @@ function NetworkedGameView({
             balls: msg.state.balls,
           };
 
-          // --- Own paddle reconciliation (tiered snap/blend) ---
+          // --- Own paddle reconciliation (smooth exponential blend) ---
           serverPaddleRef.current = snap.self.paddleY;
           if (!touchDraggingRef.current) {
             const delta = snap.self.paddleY - predictedPaddleRef.current;
             const absDelta = Math.abs(delta);
-            if (predictedDirRef.current === 0 || absDelta < 1.5) {
-              // Not moving or very close — snap to server
-              predictedPaddleRef.current = snap.self.paddleY;
-            } else if (absDelta > 6) {
-              // Way off — hard snap
+            if (absDelta > 8) {
+              // Teleport — too far off (lag spike or respawn)
               predictedPaddleRef.current = snap.self.paddleY;
             } else {
-              // Moving with moderate drift — blend toward server
-              predictedPaddleRef.current += delta * 0.5;
+              // Smooth exponential blend toward server
+              predictedPaddleRef.current += delta * 0.18;
             }
             setSelfPaddleLeftOverride(predictedPaddleRef.current);
           }
@@ -1007,11 +1013,16 @@ function NetworkedGameView({
         if (elapsed > 0 && elapsed < 0.1) {
           rendered = {
             ...prev.snapshot,
-            balls: prev.snapshot.balls.map((ball) => ({
-              ...ball,
-              x: ball.x + ball.vx * elapsed,
-              y: ball.y + ball.vy * elapsed,
-            })),
+            balls: prev.snapshot.balls.map((ball) => {
+              let x = ball.x + ball.vx * elapsed;
+              let y = ball.y + ball.vy * elapsed;
+              // Clamp to arena bounds to prevent visual tunneling
+              if (y - BALL_RADIUS < 0) y = BALL_RADIUS;
+              else if (y + BALL_RADIUS > ARENA_HEIGHT) y = ARENA_HEIGHT - BALL_RADIUS;
+              if (x < 0) x = 0;
+              else if (x > ARENA_WIDTH) x = ARENA_WIDTH;
+              return { ...ball, x, y };
+            }),
           };
         } else {
           rendered = prev.snapshot;

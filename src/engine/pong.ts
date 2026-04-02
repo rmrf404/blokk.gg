@@ -11,8 +11,10 @@ export const ARENA_HEIGHT = 60;
 export const PADDLE_MARGIN = 5;
 export const PADDLE_WIDTH = 2;
 export const BALL_RADIUS = 1.4;
-/** Extra Y-axis tolerance on paddle collision to compensate for network latency. */
-const HIT_TOLERANCE = 2;
+/** Base Y-axis tolerance on paddle collision to compensate for network latency. */
+const BASE_HIT_TOLERANCE = 2;
+/** Maximum tolerance at MAX_BALL_SPEED — accounts for larger per-tick travel. */
+const MAX_HIT_TOLERANCE = 4.5;
 export const PADDLE_SIZE = 11;
 export const PADDLE_SPEED = 78;
 export const BASE_BALL_SPEED = 62;
@@ -304,6 +306,11 @@ function maybeBounceOnPaddles(
   const leftFrontX = PADDLE_MARGIN + PADDLE_WIDTH;
   const rightFrontX = ARENA_WIDTH - PADDLE_MARGIN - PADDLE_WIDTH;
 
+  // Dynamic tolerance: scales with ball speed to prevent tunneling at high velocity
+  const ballSpeed = Math.hypot(ball.vx, ball.vy);
+  const speedRatio = Math.min(ballSpeed / MAX_BALL_SPEED, 1);
+  const hitTolerance = BASE_HIT_TOLERANCE + speedRatio * (MAX_HIT_TOLERANCE - BASE_HIT_TOLERANCE);
+
   if (
     ball.vx < 0
     && previousX - BALL_RADIUS >= leftFrontX
@@ -312,8 +319,8 @@ function maybeBounceOnPaddles(
     const t = (previousX - BALL_RADIUS - leftFrontX) / (previousX - movedX);
     const yAtCross = previousY + (movedY - previousY) * t;
     if (
-      yAtCross + BALL_RADIUS + HIT_TOLERANCE >= leftPlayer.paddleY
-      && yAtCross - BALL_RADIUS - HIT_TOLERANCE <= leftPlayer.paddleY + PADDLE_SIZE
+      yAtCross + BALL_RADIUS + hitTolerance >= leftPlayer.paddleY
+      && yAtCross - BALL_RADIUS - hitTolerance <= leftPlayer.paddleY + PADDLE_SIZE
     ) {
       ball.y = yAtCross;
       reflectBallFromPaddle(state, ball, "top");
@@ -329,8 +336,8 @@ function maybeBounceOnPaddles(
     const t = (rightFrontX - previousX - BALL_RADIUS) / (movedX - previousX);
     const yAtCross = previousY + (movedY - previousY) * t;
     if (
-      yAtCross + BALL_RADIUS + HIT_TOLERANCE >= rightPlayer.paddleY
-      && yAtCross - BALL_RADIUS - HIT_TOLERANCE <= rightPlayer.paddleY + PADDLE_SIZE
+      yAtCross + BALL_RADIUS + hitTolerance >= rightPlayer.paddleY
+      && yAtCross - BALL_RADIUS - hitTolerance <= rightPlayer.paddleY + PADDLE_SIZE
     ) {
       ball.y = yAtCross;
       reflectBallFromPaddle(state, ball, "bottom");

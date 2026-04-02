@@ -78,13 +78,16 @@ function EntryRow({
         <div className="h-7 w-7 rounded-full bg-neutral-800" />
       )}
 
-      <span
-        className={`font-mono text-sm truncate ${
+      <a
+        href={`https://x.com/${entry.x_handle}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        className={`font-mono text-sm truncate hover:underline ${
           highlight || isTop3 ? "text-white font-bold" : "text-neutral-300"
         }`}
       >
         @{entry.x_handle}
-      </span>
+      </a>
 
       <span
         className={`font-mono text-xs text-right ${
