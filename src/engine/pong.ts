@@ -390,12 +390,6 @@ function awardPoint(state: PongMatchState, slot: PlayerSlot) {
   }
 
   state.balls = [spawnBall(state, slot === "top" ? "bottom" : "top")];
-  state.players.top.inputDirection = 0;
-  state.players.top.movementDirection = 0;
-  state.players.top.targetPaddleY = null;
-  state.players.bottom.inputDirection = 0;
-  state.players.bottom.movementDirection = 0;
-  state.players.bottom.targetPaddleY = null;
 }
 
 function updateBalls(

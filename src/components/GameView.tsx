@@ -1081,10 +1081,7 @@ function NetworkedGameView({
               let y = ball.y + ball.vy * elapsed;
               if (y - BALL_RADIUS < 0) y = BALL_RADIUS;
               else if (y + BALL_RADIUS > ARENA_HEIGHT) y = ARENA_HEIGHT - BALL_RADIUS;
-              // Clamp to paddle lines — the server handles collision/scoring,
-              // so never let the ball extrapolate past the paddle zone.
-              if (x < leftPaddleFront) x = leftPaddleFront;
-              else if (x > rightPaddleFront) x = rightPaddleFront;
+              // Don't clamp here — the post-render filter hides balls past paddles.
               return { ...ball, x, y };
             }),
           };
@@ -1100,21 +1097,19 @@ function NetworkedGameView({
         rendered = interpolateSnapshots(prev.snapshot, next.snapshot, clamp(t, 0, 1));
       }
 
-      // Clamp ball positions to paddle front lines so the ball never
-      // visually passes through a paddle regardless of render path
-      // (interpolation, extrapolation, or raw snapshot).
+      // Hide balls that are past a paddle and heading toward exit.
+      // This prevents the "ball through paddle" visual without causing
+      // the "ball slides along paddle" artifact that clamping created.
       const leftLimit = PADDLE_MARGIN + PADDLE_WIDTH + BALL_RADIUS;
       const rightLimit = ARENA_WIDTH - PADDLE_MARGIN - PADDLE_WIDTH - BALL_RADIUS;
-      if (rendered.balls.some((b) => b.x < leftLimit || b.x > rightLimit)) {
-        rendered = {
-          ...rendered,
-          balls: rendered.balls.map((b) =>
-            b.x < leftLimit || b.x > rightLimit
-              ? { ...b, x: clamp(b.x, leftLimit, rightLimit) }
-              : b,
-          ),
-        };
-      }
+      rendered = {
+        ...rendered,
+        balls: rendered.balls.filter((b) => {
+          if (b.x < leftLimit && b.vx <= 0) return false;
+          if (b.x > rightLimit && b.vx >= 0) return false;
+          return true;
+        }),
+      };
 
       setSnapshot(rendered);
       animFrame = requestAnimationFrame(loop);
