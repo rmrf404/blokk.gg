@@ -1,11 +1,12 @@
 "use client";
 
-import { signIn } from "next-auth/react";
+import { signIn, useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { useCallback, useState } from "react";
 
 export default function Home() {
   const router = useRouter();
+  const { data: session, status } = useSession();
   const [guestPending, setGuestPending] = useState(false);
 
   const playAsGuest = useCallback(() => {
@@ -21,6 +22,8 @@ export default function Home() {
         setGuestPending(false);
       });
   }, [router]);
+
+  const isAuthenticated = status === "authenticated" && !!session;
 
   return (
     <div className="relative flex h-dvh flex-1 flex-col items-center justify-center gap-12 overflow-hidden bg-[#0a0a0a] px-4 py-4 sm:gap-16">
@@ -39,21 +42,41 @@ export default function Home() {
           Fast-paced 1v1 Pong. First to 10 wins. Play ranked or jump in as a guest.
         </p>
 
-        <div className="flex flex-col gap-3 w-72">
-          <button
-            onClick={() => signIn("twitter", { callbackUrl: "/lobby" })}
-            className="h-16 rounded-sm border border-white bg-white font-mono text-sm font-bold tracking-[0.28em] text-black transition-colors hover:bg-neutral-100 active:bg-neutral-200"
-          >
-            SIGN IN WITH X
-          </button>
-          <button
-            onClick={playAsGuest}
-            disabled={guestPending}
-            className="h-16 rounded-sm border border-white bg-black font-mono text-sm font-bold tracking-[0.28em] text-white transition-colors hover:bg-white hover:text-black"
-          >
-            {guestPending ? "CREATING GUEST..." : "PLAY AS GUEST"}
-          </button>
-        </div>
+        {status === "loading" ? (
+          <div className="flex flex-col gap-3 w-72">
+            <div className="h-16 flex items-center justify-center rounded-sm border border-white/30 bg-black">
+              <p className="font-mono text-sm text-neutral-500 animate-pulse">LOADING...</p>
+            </div>
+          </div>
+        ) : isAuthenticated ? (
+          <div className="flex flex-col gap-3 w-72">
+            <p className="text-center font-mono text-sm text-neutral-400">
+              Welcome back, <span className="text-white">{session.user?.displayName ?? session.user?.xHandle ?? "Player"}</span>
+            </p>
+            <button
+              onClick={() => router.push("/lobby")}
+              className="h-16 rounded-sm border border-white bg-white font-mono text-sm font-bold tracking-[0.28em] text-black transition-colors hover:bg-neutral-100 active:bg-neutral-200"
+            >
+              GO TO LOBBY
+            </button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3 w-72">
+            <button
+              onClick={() => signIn("twitter", { callbackUrl: "/lobby" })}
+              className="h-16 rounded-sm border border-white bg-white font-mono text-sm font-bold tracking-[0.28em] text-black transition-colors hover:bg-neutral-100 active:bg-neutral-200"
+            >
+              SIGN IN WITH X
+            </button>
+            <button
+              onClick={playAsGuest}
+              disabled={guestPending}
+              className="h-16 rounded-sm border border-white bg-black font-mono text-sm font-bold tracking-[0.28em] text-white transition-colors hover:bg-white hover:text-black"
+            >
+              {guestPending ? "CREATING GUEST..." : "PLAY AS GUEST"}
+            </button>
+          </div>
+        )}
 
         <a
           href="/leaderboard"

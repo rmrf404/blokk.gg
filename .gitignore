@@ -45,3 +45,4 @@ CLAUDE.md
 DEPLOYING.md
 .claude/
 .wrangler/
+supabase/.temp/

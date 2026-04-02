@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
+import { Providers } from "./providers";
 import "./globals.css";
 
 const inter = Inter({
@@ -28,7 +29,7 @@ export default function RootLayout({
       className={`${inter.variable} ${jetbrainsMono.variable} h-full`}
     >
       <body className="min-h-full flex flex-col bg-[#0a0a0a] text-white font-sans antialiased">
-        {children}
+        <Providers>{children}</Providers>
         <footer className="fixed bottom-0 left-0 right-0 z-50 flex justify-center items-center gap-4 py-3 pointer-events-none">
           <a
             href="https://ko-fi.com/blokkgg"

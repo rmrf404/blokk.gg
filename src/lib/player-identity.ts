@@ -6,6 +6,7 @@ import {
   verifyIdentityToken,
   type VerifiedPlayerType,
 } from "@/lib/match-tokens";
+import { createSupabaseAdmin } from "@/lib/supabase-admin";
 import { createSupabaseServer } from "@/lib/supabase-server";
 
 const GUEST_COOKIE_NAME = "guest_player";
@@ -88,15 +89,48 @@ export async function createIdentityResponsePayload() {
 
   let elo: number | null = null;
   if (identity.playerType === "auth") {
+    const session = await auth();
     const xId = identity.playerId.replace("auth:", "");
     try {
+      // Read with anon client (RLS allows SELECT)
       const supabase = await createSupabaseServer();
-      const { data } = await supabase
+      const { data: existing } = await supabase
         .from("players")
         .select("elo")
         .eq("x_id", xId)
         .single();
-      if (data) elo = data.elo;
+
+      if (existing) {
+        elo = existing.elo;
+      }
+
+      // Write with service role client (bypasses RLS)
+      const admin = createSupabaseAdmin();
+      if (admin) {
+        if (existing) {
+          await admin
+            .from("players")
+            .update({
+              x_handle: session?.user?.xHandle ?? identity.displayName,
+              x_avatar: session?.user?.xAvatar ?? null,
+              display_name: identity.displayName,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("x_id", xId);
+        } else {
+          const { data: created } = await admin
+            .from("players")
+            .insert({
+              x_id: xId,
+              x_handle: session?.user?.xHandle ?? identity.displayName,
+              x_avatar: session?.user?.xAvatar ?? null,
+              display_name: identity.displayName,
+            })
+            .select("elo")
+            .single();
+          if (created) elo = created.elo;
+        }
+      }
     } catch {
       // Supabase not configured or player not found — skip
     }
