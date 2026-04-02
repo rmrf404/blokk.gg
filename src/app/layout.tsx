@@ -23,11 +23,13 @@ export const metadata: Metadata = {
     url: "https://blokk.gg",
     siteName: "BLOKK.GG",
     type: "website",
+    images: [{ url: "/opengraph-image", width: 1200, height: 630, alt: "BLOKK.GG — Competitive Pong" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "BLOKK.GG — Competitive Pong",
     description: "Fast 1v1 Pong with verified multiplayer matchmaking and instant guest play.",
+    images: ["/opengraph-image"],
   },
 };
 
