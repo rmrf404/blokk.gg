@@ -48,10 +48,11 @@ const INITIAL_PADDLE_Y = ARENA_HEIGHT / 2 - PADDLE_SIZE / 2;
 
 /**
  * Fixed interpolation delay in milliseconds.
- * At 20 Hz broadcast (50 ms between snapshots) this keeps ~2 snapshots
- * in the buffer so the client always has a pair to interpolate between.
+ * At 30 Hz broadcast (~33 ms between snapshots) this keeps ~3 snapshots
+ * in the buffer so the client always has a pair to interpolate between,
+ * even with network jitter. Must be >= 2x the broadcast interval.
  */
-const INTERPOLATION_DELAY_MS = 33;
+const INTERPOLATION_DELAY_MS = 80;
 
 interface ArenaSnapshot {
   elapsedMs: number;
@@ -688,11 +689,12 @@ function lerp(a: number, b: number, t: number) {
 function interpolateSnapshots(prev: ArenaSnapshot, next: ArenaSnapshot, t: number): ArenaSnapshot {
   const prevBalls = new Map(prev.balls.map((b) => [b.id, b]));
   const interpOpponentY = lerp(prev.opponent.paddleY, next.opponent.paddleY, t);
-  // Extrapolate opponent paddle forward by ~16ms (one frame) to reduce visual lag
-  const opponentVelocity = next.opponent.paddleY - prev.opponent.paddleY;
+  // Extrapolate opponent paddle forward to compensate for interpolation delay.
+  // Use damped velocity (0.7x) to prevent overshoot on direction changes.
+  const opponentDelta = next.opponent.paddleY - prev.opponent.paddleY;
   const timeBetween = next.elapsedMs - prev.elapsedMs;
   const extrapolatedOpponentY = timeBetween > 0
-    ? clamp(interpOpponentY + (opponentVelocity / timeBetween) * 16, 0, ARENA_HEIGHT - PADDLE_SIZE)
+    ? clamp(interpOpponentY + (opponentDelta / timeBetween) * 25 * 0.7, 0, ARENA_HEIGHT - PADDLE_SIZE)
     : interpOpponentY;
 
   return {
@@ -880,18 +882,22 @@ function NetworkedGameView({
             balls: msg.state.balls,
           };
 
-          // --- Own paddle reconciliation (smooth exponential blend) ---
+          // --- Own paddle reconciliation ---
+          // Use server position as ground truth. When the player is actively
+          // moving, allow small drift (prediction is close enough). When idle
+          // or drift is large, snap to server to prevent accumulating error.
           serverPaddleRef.current = snap.self.paddleY;
           if (!touchDraggingRef.current) {
             const delta = snap.self.paddleY - predictedPaddleRef.current;
             const absDelta = Math.abs(delta);
-            if (absDelta > 8) {
-              // Teleport — too far off (lag spike or respawn)
+            if (predictedDirRef.current === 0 || absDelta > 5) {
+              // Not moving OR significant drift — snap to server authority
               predictedPaddleRef.current = snap.self.paddleY;
-            } else {
-              // Smooth exponential blend toward server
-              predictedPaddleRef.current += delta * 0.18;
+            } else if (absDelta > 1) {
+              // Small drift while moving — correct 40% per update for quick convergence
+              predictedPaddleRef.current += delta * 0.4;
             }
+            // If absDelta <= 1 while moving, prediction is accurate enough — keep it
             setSelfPaddleLeftOverride(predictedPaddleRef.current);
           }
 

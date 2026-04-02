@@ -3,7 +3,7 @@
  * Runs an authoritative match simulation and broadcasts snapshots to clients.
  *
  * Server ticks at 60 Hz for physics accuracy.
- * State is broadcast at 20 Hz (every 3rd tick) to save bandwidth.
+ * State is broadcast at 30 Hz (every 2nd tick) for smooth Pong gameplay.
  */
 
 import { Server, type Connection } from "partyserver";
@@ -238,8 +238,9 @@ export class Gameroom extends Server {
         return;
       }
 
-      // Broadcast at 20 Hz (every 3rd tick) to save bandwidth
-      if (this.tickCount % 3 === 0) {
+      // Broadcast every 2nd tick (30 Hz). Pong needs frequent updates due
+      // to fast ball speeds; 20 Hz is too slow for smooth interpolation.
+      if (this.tickCount % 2 === 0) {
         this.broadcastMatchState();
       }
     }, 1000 / 60);
