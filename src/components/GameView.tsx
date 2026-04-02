@@ -1068,19 +1068,23 @@ function NetworkedGameView({
 
       let rendered: ArenaSnapshot;
       if (!next || next.serverTimeMs <= prev.serverTimeMs) {
-        // Only one snapshot — extrapolate ball positions using velocity
+        // Only one snapshot — extrapolate ball positions using velocity.
+        // Clamp to paddle lines so the ball never visually passes through a paddle.
         const elapsed = (renderAt - prev.serverTimeMs) / 1000;
         if (elapsed > 0 && elapsed < 0.1) {
+          const leftPaddleFront = PADDLE_MARGIN + PADDLE_WIDTH + BALL_RADIUS;
+          const rightPaddleFront = ARENA_WIDTH - PADDLE_MARGIN - PADDLE_WIDTH - BALL_RADIUS;
           rendered = {
             ...prev.snapshot,
             balls: prev.snapshot.balls.map((ball) => {
               let x = ball.x + ball.vx * elapsed;
               let y = ball.y + ball.vy * elapsed;
-              // Clamp to arena bounds to prevent visual tunneling
               if (y - BALL_RADIUS < 0) y = BALL_RADIUS;
               else if (y + BALL_RADIUS > ARENA_HEIGHT) y = ARENA_HEIGHT - BALL_RADIUS;
-              if (x < 0) x = 0;
-              else if (x > ARENA_WIDTH) x = ARENA_WIDTH;
+              // Clamp to paddle lines — the server handles collision/scoring,
+              // so never let the ball extrapolate past the paddle zone.
+              if (x < leftPaddleFront) x = leftPaddleFront;
+              else if (x > rightPaddleFront) x = rightPaddleFront;
               return { ...ball, x, y };
             }),
           };

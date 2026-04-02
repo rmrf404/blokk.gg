@@ -405,6 +405,7 @@ function updateBalls(
   previousBottomPaddleY: number,
 ) {
   const nextBalls: BallState[] = [];
+  let scored = false;
 
   for (const ball of state.balls) {
     const previousX = ball.x;
@@ -428,6 +429,7 @@ function updateBalls(
 
     if (ball.x + BALL_RADIUS < 0) {
       awardPoint(state, "bottom");
+      scored = true;
       if (state.winnerSlot) {
         return;
       }
@@ -435,6 +437,7 @@ function updateBalls(
     }
     if (ball.x - BALL_RADIUS > ARENA_WIDTH) {
       awardPoint(state, "top");
+      scored = true;
       if (state.winnerSlot) {
         return;
       }
@@ -444,7 +447,9 @@ function updateBalls(
     nextBalls.push(ball);
   }
 
-  if (!state.winnerSlot) {
+  // When a point is scored, awardPoint already set state.balls to the
+  // correctly directed respawn. Don't overwrite it with nextBalls.
+  if (!state.winnerSlot && !scored) {
     state.balls = nextBalls;
   }
 }
@@ -470,9 +475,5 @@ export function tickMatch(state: PongMatchState, deltaMs: number) {
     const previousBottomPaddleY = state.players.bottom.paddleY;
     updatePlayers(state, step);
     updateBalls(state, step, previousTopPaddleY, previousBottomPaddleY);
-
-    if (state.balls.length === 0 && !state.winnerSlot) {
-      state.balls.push(spawnBall(state));
-    }
   }
 }
