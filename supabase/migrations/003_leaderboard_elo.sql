@@ -1,5 +1,7 @@
 -- Add ELO to weekly leaderboard RPC functions
 
+DROP FUNCTION IF EXISTS weekly_leaderboard(INTEGER);
+
 CREATE OR REPLACE FUNCTION weekly_leaderboard(result_limit INTEGER DEFAULT 100)
 RETURNS TABLE (
   player_id UUID,
@@ -64,9 +66,11 @@ AS $$
 $$;
 
 -- Get a single player's weekly rank and stats by x_id (with ELO)
+DROP FUNCTION IF EXISTS player_weekly_rank(TEXT);
+
 CREATE OR REPLACE FUNCTION player_weekly_rank(target_x_id TEXT)
 RETURNS TABLE (
-  position BIGINT,
+  "position" BIGINT,
   player_id UUID,
   x_handle TEXT,
   x_avatar TEXT,

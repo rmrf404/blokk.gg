@@ -66,7 +66,7 @@ $$;
 -- Get a single player's weekly rank and stats by x_id
 CREATE OR REPLACE FUNCTION player_weekly_rank(target_x_id TEXT)
 RETURNS TABLE (
-  position BIGINT,
+  "position" BIGINT,
   player_id UUID,
   x_handle TEXT,
   x_avatar TEXT,
