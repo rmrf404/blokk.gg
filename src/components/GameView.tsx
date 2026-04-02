@@ -48,11 +48,12 @@ const INITIAL_PADDLE_Y = ARENA_HEIGHT / 2 - PADDLE_SIZE / 2;
 
 /**
  * Fixed interpolation delay in milliseconds.
- * ~3 snapshots of buffer at 60 Hz broadcast. Smooths opponent/ball rendering
- * through network jitter. The 50 ms of added visual latency is imperceptible
- * for Pong.
+ * Kept minimal (~1.2 snapshots at 60 Hz) to minimize visual mismatch between
+ * the predicted paddle (real-time) and the interpolated ball/opponent.
+ * A large delay causes "ball bounces off nothing" because the server decided
+ * the collision based on the paddle position from delay-ms ago.
  */
-const INTERPOLATION_DELAY_MS = 50;
+const INTERPOLATION_DELAY_MS = 20;
 
 /** Server tick duration — must match TICK_MS on the server. */
 const TICK_MS = 1000 / 60;
@@ -927,21 +928,16 @@ function NetworkedGameView({
               predictedPaddleRef.current = snap.self.paddleY;
             }
           } else {
-            // Keyboard: replay unacknowledged inputs on top of server state.
-            // Do NOT overwrite predictedDirRef — it must reflect the actual
-            // held key state (set in onAction), not the replayed history.
-            // Otherwise the paddle stops predicting once inputs are acked.
-            let reconciledY = snap.self.paddleY;
-            let dir: -1 | 0 | 1 = 0;
-            for (const input of unackedInputsRef.current) {
-              dir = applyPredictedInputDirection(dir, input.action);
-              reconciledY = clamp(
-                reconciledY + dir * PADDLE_SPEED * (TICK_MS / 1000),
-                0,
-                ARENA_HEIGHT - PADDLE_SIZE,
-              );
+            // Blend toward server position. With 20ms interpolation delay the
+            // max drift is ~1.5 units, so the blend converges in a few frames.
+            // Snap for large drift (connection hiccup or first frame).
+            const delta = snap.self.paddleY - predictedPaddleRef.current;
+            const absDelta = Math.abs(delta);
+            if (absDelta > 10) {
+              predictedPaddleRef.current = snap.self.paddleY;
+            } else if (absDelta > 0.5) {
+              predictedPaddleRef.current += delta * 0.35;
             }
-            predictedPaddleRef.current = reconciledY;
           }
           setSelfPaddleLeftOverride(predictedPaddleRef.current);
 
@@ -1072,8 +1068,6 @@ function NetworkedGameView({
         // Clamp to paddle lines so the ball never visually passes through a paddle.
         const elapsed = (renderAt - prev.serverTimeMs) / 1000;
         if (elapsed > 0 && elapsed < 0.1) {
-          const leftPaddleFront = PADDLE_MARGIN + PADDLE_WIDTH + BALL_RADIUS;
-          const rightPaddleFront = ARENA_WIDTH - PADDLE_MARGIN - PADDLE_WIDTH - BALL_RADIUS;
           rendered = {
             ...prev.snapshot,
             balls: prev.snapshot.balls.map((ball) => {
@@ -1081,7 +1075,6 @@ function NetworkedGameView({
               let y = ball.y + ball.vy * elapsed;
               if (y - BALL_RADIUS < 0) y = BALL_RADIUS;
               else if (y + BALL_RADIUS > ARENA_HEIGHT) y = ARENA_HEIGHT - BALL_RADIUS;
-              // Don't clamp here — the post-render filter hides balls past paddles.
               return { ...ball, x, y };
             }),
           };
@@ -1133,16 +1126,15 @@ function NetworkedGameView({
             }
           }
 
-          // Ball bounce off nothing
+          // Ball bounce off nothing — use refs for current paddle position
           for (const ball of rendered.balls) {
             const pb = prevSnap.balls.find((b) => b.id === ball.id);
             if (!pb) continue;
             if (pb.vx < 0 && ball.vx > 0) {
-              // Bounced off left paddle — check if self paddle was there
-              const padY = selfPaddleLeftOverride ?? rendered.self.paddleY;
+              const padY = predictedPaddleRef.current;
               const ballInPaddle = ball.y >= padY - 2 && ball.y <= padY + PADDLE_SIZE + 2;
               if (!ballInPaddle) {
-                console.warn(`[PONG] Ball bounced LEFT but paddle not covering! ball.y=${ball.y.toFixed(1)} pad=${padY.toFixed(1)}-${(padY + PADDLE_SIZE).toFixed(1)}`);
+                console.warn(`[PONG] Ball bounced LEFT but paddle not covering! ball.y=${ball.y.toFixed(1)} pad=${padY.toFixed(1)}-${(padY + PADDLE_SIZE).toFixed(1)} serverPad=${serverPaddleRef.current.toFixed(1)}`);
               }
             }
           }
@@ -1154,10 +1146,10 @@ function NetworkedGameView({
             console.log(`[PONG] SCORE: ${rendered.self.score}-${rendered.opponent.score}`);
           }
         }
-        // Paddle prediction vs server
-        const drift = Math.abs((selfPaddleLeftOverride ?? rendered.self.paddleY) - serverPaddleRef.current);
-        if (drift > 5) {
-          console.warn(`[PONG] Paddle drift: predicted=${(selfPaddleLeftOverride ?? 0).toFixed(1)} server=${serverPaddleRef.current.toFixed(1)} drift=${drift.toFixed(1)}`);
+        // Paddle prediction vs server (use refs, not stale closure state)
+        const drift = Math.abs(predictedPaddleRef.current - serverPaddleRef.current);
+        if (drift > 3) {
+          console.warn(`[PONG] Paddle drift: predicted=${predictedPaddleRef.current.toFixed(1)} server=${serverPaddleRef.current.toFixed(1)} drift=${drift.toFixed(1)}`);
         }
 
         (window as any).__prevRendered = rendered;
