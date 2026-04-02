@@ -1148,7 +1148,7 @@ function NetworkedGameView({
         }
         // Paddle prediction vs server (use refs, not stale closure state)
         const drift = Math.abs(predictedPaddleRef.current - serverPaddleRef.current);
-        if (drift > 3) {
+        if (drift > 8) {
           console.warn(`[PONG] Paddle drift: predicted=${predictedPaddleRef.current.toFixed(1)} server=${serverPaddleRef.current.toFixed(1)} drift=${drift.toFixed(1)}`);
         }
 
