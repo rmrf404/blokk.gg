@@ -1100,6 +1100,22 @@ function NetworkedGameView({
         rendered = interpolateSnapshots(prev.snapshot, next.snapshot, clamp(t, 0, 1));
       }
 
+      // Clamp ball positions to paddle front lines so the ball never
+      // visually passes through a paddle regardless of render path
+      // (interpolation, extrapolation, or raw snapshot).
+      const leftLimit = PADDLE_MARGIN + PADDLE_WIDTH + BALL_RADIUS;
+      const rightLimit = ARENA_WIDTH - PADDLE_MARGIN - PADDLE_WIDTH - BALL_RADIUS;
+      if (rendered.balls.some((b) => b.x < leftLimit || b.x > rightLimit)) {
+        rendered = {
+          ...rendered,
+          balls: rendered.balls.map((b) =>
+            b.x < leftLimit || b.x > rightLimit
+              ? { ...b, x: clamp(b.x, leftLimit, rightLimit) }
+              : b,
+          ),
+        };
+      }
+
       setSnapshot(rendered);
       animFrame = requestAnimationFrame(loop);
     };
