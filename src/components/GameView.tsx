@@ -921,14 +921,16 @@ function NetworkedGameView({
           );
 
           if (predictedTargetPaddleRef.current !== null) {
-            // Mobile touch: absolute positioning — use pending target or server
-            if (pendingPaddleUpdateRef.current) {
-              predictedPaddleRef.current = predictedPaddleRef.current;
-            } else {
+            // Mobile touch: absolute positioning — keep predicted target,
+            // only snap to server when no pending update remains.
+            if (!pendingPaddleUpdateRef.current && !touchDraggingRef.current) {
               predictedPaddleRef.current = snap.self.paddleY;
             }
           } else {
-            // Keyboard: replay unacknowledged inputs on top of server state
+            // Keyboard: replay unacknowledged inputs on top of server state.
+            // Do NOT overwrite predictedDirRef — it must reflect the actual
+            // held key state (set in onAction), not the replayed history.
+            // Otherwise the paddle stops predicting once inputs are acked.
             let reconciledY = snap.self.paddleY;
             let dir: -1 | 0 | 1 = 0;
             for (const input of unackedInputsRef.current) {
@@ -940,7 +942,6 @@ function NetworkedGameView({
               );
             }
             predictedPaddleRef.current = reconciledY;
-            predictedDirRef.current = dir;
           }
           setSelfPaddleLeftOverride(predictedPaddleRef.current);
 

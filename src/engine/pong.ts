@@ -449,18 +449,30 @@ function updateBalls(
   }
 }
 
+/** Maximum physics sub-step in ms. Keeps swept-collision reliable at high ball speeds. */
+const MAX_SUBSTEP_MS = 1000 / 60;
+
 export function tickMatch(state: PongMatchState, deltaMs: number) {
   if (state.winnerSlot) {
     return;
   }
 
   state.elapsedMs += deltaMs;
-  const previousTopPaddleY = state.players.top.paddleY;
-  const previousBottomPaddleY = state.players.bottom.paddleY;
-  updatePlayers(state, deltaMs);
-  updateBalls(state, deltaMs, previousTopPaddleY, previousBottomPaddleY);
 
-  if (state.balls.length === 0 && !state.winnerSlot) {
-    state.balls.push(spawnBall(state));
+  // Sub-step the physics so that fast balls cannot tunnel through paddles
+  // when deltaMs exceeds a single 60 Hz frame (e.g. during catch-up ticks).
+  let remaining = deltaMs;
+  while (remaining > 0 && !state.winnerSlot) {
+    const step = Math.min(remaining, MAX_SUBSTEP_MS);
+    remaining -= step;
+
+    const previousTopPaddleY = state.players.top.paddleY;
+    const previousBottomPaddleY = state.players.bottom.paddleY;
+    updatePlayers(state, step);
+    updateBalls(state, step, previousTopPaddleY, previousBottomPaddleY);
+
+    if (state.balls.length === 0 && !state.winnerSlot) {
+      state.balls.push(spawnBall(state));
+    }
   }
 }

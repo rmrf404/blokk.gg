@@ -1,6 +1,5 @@
 import {
   applyInput,
-  cloneMatchState,
   createMatch,
   serializeMatchState,
   setPlayerPaddleTarget,
@@ -16,23 +15,11 @@ import type {
 } from "../src/multiplayer/types";
 
 const TICK_MS = 1000 / 60;
-const MAX_ROLLBACK_MS = 100;
-const MAX_ROLLBACK_FRAMES = Math.ceil(MAX_ROLLBACK_MS / TICK_MS);
-const HISTORY_FRAMES = MAX_ROLLBACK_FRAMES + 8;
 const INPUT_LEAD_MS = TICK_MS * 3;
-/** Inputs targeting frames within this many frames of the current frame are
- *  redirected to the next tick instead of triggering a full rollback. */
-const GRACE_FRAMES = 3;
 
 type ScheduledCommand =
   | { slot: PlayerSlot; frame: number; type: "input"; seq: number; action: InputAction }
   | { slot: PlayerSlot; frame: number; type: "paddle_target"; seq: number; paddleY: number };
-
-interface HistoryEntry {
-  frame: number;
-  state: PongMatchState;
-  lastProcessedSeq: Record<PlayerSlot, number>;
-}
 
 interface PlayerRuntime {
   slot: PlayerSlot;
@@ -54,7 +41,6 @@ export class AuthoritativeMatch {
   private readonly players: Record<PlayerSlot, PlayerRuntime>;
   private state: PongMatchState;
   private readonly scheduledCommands = new Map<number, ScheduledCommand[]>();
-  private history: HistoryEntry[] = [];
   private winnerSlot: PlayerSlot | null = null;
   private winnerReason: GameResultReason | null = null;
   private gameStarted = false;
@@ -67,7 +53,6 @@ export class AuthoritativeMatch {
       bottom: this.createRuntime(bottom),
     };
     this.state = createMatch(baseSeed, top.displayName, bottom.displayName);
-    this.pushHistoryEntry(0);
   }
 
   start() {
@@ -128,7 +113,6 @@ export class AuthoritativeMatch {
     this.serverFrame++;
     this.processCommandsForFrame(this.serverFrame);
     tickMatch(this.state, TICK_MS);
-    this.pushHistoryEntry(this.serverFrame);
     this.syncWinnerState();
   }
 
@@ -155,16 +139,18 @@ export class AuthoritativeMatch {
     const requestedTimeMs = Number.isFinite(clientTimeMs) ? clientTimeMs! : fallbackTimeMs;
     const clampedTimeMs = Math.min(
       this.state.elapsedMs + INPUT_LEAD_MS,
-      Math.max(this.state.elapsedMs - MAX_ROLLBACK_MS, requestedTimeMs),
+      Math.max(0, requestedTimeMs),
     );
-    const oldestHistoryFrame = this.history[0]?.frame ?? 0;
-    return Math.max(oldestHistoryFrame + 1, Math.floor(clampedTimeMs / TICK_MS) + 1);
+    return Math.max(this.serverFrame + 1, Math.floor(clampedTimeMs / TICK_MS) + 1);
   }
 
   private scheduleCommand(command: ScheduledCommand) {
-    // Redirect near-past inputs to the next tick instead of rolling back.
-    // This eliminates most rollbacks caused by inputs arriving just barely late.
-    if (command.frame <= this.serverFrame && this.serverFrame - command.frame <= GRACE_FRAMES) {
+    // Always redirect past inputs to the next tick instead of rolling back.
+    // Pong paddle movement is continuous — applying a late input at the next
+    // tick instead of its exact historical frame produces negligible gameplay
+    // difference while completely eliminating rollback-induced paddle jumps
+    // and ball-through-paddle artifacts.
+    if (command.frame <= this.serverFrame) {
       command.frame = this.serverFrame + 1;
     }
 
@@ -174,33 +160,6 @@ export class AuthoritativeMatch {
     } else {
       this.scheduledCommands.set(command.frame, [command]);
     }
-
-    if (command.frame <= this.serverFrame) {
-      this.rewindAndReplay(command.frame);
-    }
-  }
-
-  private rewindAndReplay(fromFrame: number) {
-    const target = this.history.find((entry) => entry.frame === fromFrame - 1);
-    if (!target) {
-      return;
-    }
-
-    const originalFrame = this.serverFrame;
-    this.restoreHistoryEntry(target);
-    for (let frame = fromFrame; frame <= originalFrame; frame++) {
-      this.serverFrame = frame;
-      if (!this.isOver()) {
-        this.processCommandsForFrame(frame);
-      }
-      if (!this.isOver()) {
-        tickMatch(this.state, TICK_MS);
-      }
-      this.upsertHistoryEntry(frame);
-    }
-    this.serverFrame = originalFrame;
-    this.syncWinnerState();
-    this.pruneHistory();
   }
 
   private processCommandsForFrame(frame: number) {
@@ -208,6 +167,8 @@ export class AuthoritativeMatch {
     if (!commands || commands.length === 0) {
       return;
     }
+    // Clean up — commands for this frame will not be needed again.
+    this.scheduledCommands.delete(frame);
 
     commands
       .slice()
@@ -228,42 +189,6 @@ export class AuthoritativeMatch {
       });
   }
 
-  private pushHistoryEntry(frame: number) {
-    this.history.push(this.createHistoryEntry(frame));
-    this.pruneHistory();
-  }
-
-  private upsertHistoryEntry(frame: number) {
-    const existingIndex = this.history.findIndex((entry) => entry.frame === frame);
-    const nextEntry = this.createHistoryEntry(frame);
-    if (existingIndex >= 0) {
-      this.history[existingIndex] = nextEntry;
-    } else {
-      this.history.push(nextEntry);
-    }
-    this.history.sort((a, b) => a.frame - b.frame);
-    this.pruneHistory();
-  }
-
-  private createHistoryEntry(frame: number): HistoryEntry {
-    return {
-      frame,
-      state: cloneMatchState(this.state),
-      lastProcessedSeq: {
-        top: this.players.top.lastProcessedSeq,
-        bottom: this.players.bottom.lastProcessedSeq,
-      },
-    };
-  }
-
-  private restoreHistoryEntry(entry: HistoryEntry) {
-    this.serverFrame = entry.frame;
-    this.state = cloneMatchState(entry.state);
-    this.players.top.lastProcessedSeq = entry.lastProcessedSeq.top;
-    this.players.bottom.lastProcessedSeq = entry.lastProcessedSeq.bottom;
-    this.syncWinnerState();
-  }
-
   private syncWinnerState() {
     if (this.state.winnerSlot) {
       this.winnerSlot = this.state.winnerSlot;
@@ -271,23 +196,6 @@ export class AuthoritativeMatch {
     } else {
       this.winnerSlot = null;
       this.winnerReason = null;
-    }
-  }
-
-  private pruneHistory() {
-    if (this.history.length > HISTORY_FRAMES) {
-      this.history = this.history.slice(this.history.length - HISTORY_FRAMES);
-    }
-
-    const oldestFrame = this.history[0]?.frame;
-    if (oldestFrame === undefined) {
-      return;
-    }
-
-    for (const frame of [...this.scheduledCommands.keys()]) {
-      if (frame < oldestFrame) {
-        this.scheduledCommands.delete(frame);
-      }
     }
   }
 }
