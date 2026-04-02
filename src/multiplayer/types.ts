@@ -40,6 +40,7 @@ export type ClientMessage =
   | { type: "join_room"; joinToken: string }
   | { type: "request_rematch" }
   | { type: "input"; seq: number; action: InputAction }
+  | { type: "paddle_target"; seq: number; paddleY: number }
   | { type: "paddle_position"; seq: number; paddleY: number };
 
 /** Server -> Client messages */

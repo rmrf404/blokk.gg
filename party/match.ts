@@ -2,7 +2,7 @@ import {
   applyInput,
   createMatch,
   serializeMatchState,
-  setPlayerPaddlePosition,
+  setPlayerPaddleTarget,
   tickMatch,
   type PongMatchState,
 } from "../src/engine/pong";
@@ -18,7 +18,7 @@ const TICK_MS = 1000 / 60;
 
 type QueuedCommand =
   | { type: "input"; seq: number; action: InputAction }
-  | { type: "paddle_position"; seq: number; paddleY: number };
+  | { type: "paddle_target"; seq: number; paddleY: number };
 
 interface PlayerRuntime {
   slot: PlayerSlot;
@@ -96,12 +96,12 @@ export class AuthoritativeMatch {
     player.commandQueue.push({ type: "input", seq, action });
   }
 
-  enqueuePaddlePosition(slot: PlayerSlot, seq: number, paddleY: number) {
+  enqueuePaddleTarget(slot: PlayerSlot, seq: number, paddleY: number) {
     const player = this.players[slot];
     if (this.isOver() || !this.gameStarted) return;
     if (seq <= player.lastSeq) return;
     player.lastSeq = seq;
-    player.commandQueue.push({ type: "paddle_position", seq, paddleY });
+    player.commandQueue.push({ type: "paddle_target", seq, paddleY });
   }
 
   tick(): void {
@@ -143,8 +143,8 @@ export class AuthoritativeMatch {
       const cmd = player.commandQueue.shift()!;
       if (cmd.type === "input") {
         applyInput(this.state, slot, cmd.action);
-      } else if (cmd.type === "paddle_position") {
-        setPlayerPaddlePosition(this.state, slot, cmd.paddleY);
+      } else if (cmd.type === "paddle_target") {
+        setPlayerPaddleTarget(this.state, slot, cmd.paddleY);
       }
       player.lastProcessedSeq = cmd.seq;
     }

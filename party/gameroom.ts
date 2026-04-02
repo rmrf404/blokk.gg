@@ -16,7 +16,7 @@ import type {
   PlayerType,
   ServerMessage,
 } from "../src/multiplayer/types";
-import { ARENA_HEIGHT } from "../src/engine/pong";
+import { ARENA_HEIGHT, PADDLE_SIZE } from "../src/engine/pong";
 import { getMatchTokenSecret, verifyRoomJoinToken } from "../src/lib/match-tokens";
 import { calculateElo } from "../src/lib/elo";
 import { createPartySupabase } from "./supabase";
@@ -86,11 +86,12 @@ export class Gameroom extends Server {
         this.match.enqueueInput(player.slot, msg.seq, msg.action);
         break;
       }
+      case "paddle_target":
       case "paddle_position": {
         if (this.gameOver) return;
         const player = this.players.find((p) => p.conn.id === conn.id);
-        if (!player?.joined || !this.match || !this.isValidPaddlePositionMessage(msg.seq, msg.paddleY)) return;
-        this.match.enqueuePaddlePosition(player.slot, msg.seq, msg.paddleY);
+        if (!player?.joined || !this.match || !this.isValidPaddleTargetMessage(msg.seq, msg.paddleY)) return;
+        this.match.enqueuePaddleTarget(player.slot, msg.seq, msg.paddleY);
         break;
       }
     }
@@ -227,23 +228,48 @@ export class Gameroom extends Server {
   private startTickLoop() {
     if (this.tickInterval || !this.match) return;
     this.tickCount = 0;
-    this.tickInterval = setInterval(() => {
-      this.match?.tick();
-      this.tickCount++;
+    const stepMs = 1000 / 60;
+    const broadcastMs = 1000 / 30;
+    const maxCatchUpSteps = 5;
+    let lastLoopAt = performance.now();
+    let accumulator = 0;
+    let broadcastAccumulator = 0;
 
-      const winnerSlot = this.match?.getWinnerSlot();
-      if (winnerSlot) {
-        this.broadcastMatchState();
-        this.finishMatch(winnerSlot, this.match?.getWinnerReason() ?? "score");
+    this.tickInterval = setInterval(() => {
+      const now = performance.now();
+      const elapsed = Math.min(now - lastLoopAt, 250);
+      lastLoopAt = now;
+      accumulator += elapsed;
+      broadcastAccumulator += elapsed;
+
+      let ticksProcessed = 0;
+      while (accumulator >= stepMs && ticksProcessed < maxCatchUpSteps) {
+        this.match?.tick();
+        this.tickCount++;
+        ticksProcessed++;
+        accumulator -= stepMs;
+
+        const winnerSlot = this.match?.getWinnerSlot();
+        if (winnerSlot) {
+          this.broadcastMatchState();
+          this.finishMatch(winnerSlot, this.match?.getWinnerReason() ?? "score");
+          return;
+        }
+      }
+
+      if (ticksProcessed === maxCatchUpSteps && accumulator >= stepMs) {
+        accumulator = stepMs;
+      }
+
+      if (ticksProcessed === 0) {
         return;
       }
 
-      // Broadcast every 2nd tick (30 Hz). Pong needs frequent updates due
-      // to fast ball speeds; 20 Hz is too slow for smooth interpolation.
-      if (this.tickCount % 2 === 0) {
+      if (broadcastAccumulator >= broadcastMs) {
+        broadcastAccumulator %= broadcastMs;
         this.broadcastMatchState();
       }
-    }, 1000 / 60);
+    }, stepMs);
   }
 
   private stopTickLoop() {
@@ -421,13 +447,13 @@ export class Gameroom extends Server {
       );
   }
 
-  private isValidPaddlePositionMessage(seq: number, paddleY: number) {
+  private isValidPaddleTargetMessage(seq: number, paddleY: number) {
     return Number.isInteger(seq)
       && seq >= 0
       && seq <= 10_000_000
       && Number.isFinite(paddleY)
       && paddleY >= 0
-      && paddleY <= ARENA_HEIGHT;
+      && paddleY <= ARENA_HEIGHT - PADDLE_SIZE;
   }
 
   private handleRequestRematch(conn: Connection) {

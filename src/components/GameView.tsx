@@ -13,7 +13,7 @@ import {
   applyInput,
   cloneMatchState,
   createMatch,
-  setPlayerPaddlePosition,
+  setPlayerPaddleTarget,
   serializePlayerState,
   tickCpu,
   tickMatch,
@@ -48,11 +48,12 @@ const INITIAL_PADDLE_Y = ARENA_HEIGHT / 2 - PADDLE_SIZE / 2;
 
 /**
  * Fixed interpolation delay in milliseconds.
- * At 30 Hz broadcast (~33 ms between snapshots) this keeps ~3 snapshots
- * in the buffer so the client always has a pair to interpolate between,
- * even with network jitter. Must be >= 2x the broadcast interval.
+ * At 30 Hz broadcast (~33 ms between snapshots) this keeps roughly two
+ * snapshots buffered while reducing the local paddle/ball timeslice mismatch.
  */
-const INTERPOLATION_DELAY_MS = 80;
+const INTERPOLATION_DELAY_MS = 66;
+const SELF_PADDLE_BLEND_DISTANCE = 1.25;
+const SELF_PADDLE_SNAP_DISTANCE = 10;
 
 interface ArenaSnapshot {
   elapsedMs: number;
@@ -648,7 +649,7 @@ function LocalGameView({
   }, []);
 
   const onPaddlePosition = useCallback((paddleLeft: number) => {
-    setPlayerPaddlePosition(stateRef.current, "top", paddleLeft);
+    setPlayerPaddleTarget(stateRef.current, "top", paddleLeft);
     setSnapshot(createArenaSnapshot(cloneMatchState(stateRef.current)));
   }, []);
 
@@ -685,24 +686,16 @@ function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
-/** Interpolate between two arena snapshots with opponent paddle velocity extrapolation. */
+/** Interpolate between two arena snapshots without overshooting paddle reversals. */
 function interpolateSnapshots(prev: ArenaSnapshot, next: ArenaSnapshot, t: number): ArenaSnapshot {
   const prevBalls = new Map(prev.balls.map((b) => [b.id, b]));
-  const interpOpponentY = lerp(prev.opponent.paddleY, next.opponent.paddleY, t);
-  // Extrapolate opponent paddle forward to compensate for interpolation delay.
-  // Use damped velocity (0.7x) to prevent overshoot on direction changes.
-  const opponentDelta = next.opponent.paddleY - prev.opponent.paddleY;
-  const timeBetween = next.elapsedMs - prev.elapsedMs;
-  const extrapolatedOpponentY = timeBetween > 0
-    ? clamp(interpOpponentY + (opponentDelta / timeBetween) * 25 * 0.7, 0, ARENA_HEIGHT - PADDLE_SIZE)
-    : interpOpponentY;
 
   return {
     ...next,
     elapsedMs: lerp(prev.elapsedMs, next.elapsedMs, t),
     opponent: {
       ...next.opponent,
-      paddleY: extrapolatedOpponentY,
+      paddleY: lerp(prev.opponent.paddleY, next.opponent.paddleY, t),
     },
     balls: next.balls.map((ball) => {
       const p = prevBalls.get(ball.id);
@@ -738,6 +731,7 @@ function NetworkedGameView({
   // --- Own paddle prediction ---------------------------------------------------
   const serverPaddleRef = useRef(INITIAL_PADDLE_Y);
   const predictedPaddleRef = useRef(INITIAL_PADDLE_Y);
+  const predictedTargetPaddleRef = useRef<number | null>(null);
   const predictedDirRef = useRef<-1 | 0 | 1>(0);
   const touchDraggingRef = useRef(false);
 
@@ -780,7 +774,7 @@ function NetworkedGameView({
     const nextSeq = seqRef.current++;
     lastPaddleSendAtRef.current = performance.now();
     pendingPaddleUpdateRef.current = { seq: nextSeq, paddleY };
-    ws.send(JSON.stringify({ type: "paddle_position", seq: nextSeq, paddleY } satisfies ClientMessage));
+    ws.send(JSON.stringify({ type: "paddle_target", seq: nextSeq, paddleY } satisfies ClientMessage));
   }, [clearQueuedPaddleFlush]);
 
   const schedulePaddlePositionFlush = useCallback(() => {
@@ -803,6 +797,7 @@ function NetworkedGameView({
     renderTimeRef.current = null;
     serverPaddleRef.current = INITIAL_PADDLE_Y;
     predictedPaddleRef.current = INITIAL_PADDLE_Y;
+    predictedTargetPaddleRef.current = null;
     predictedDirRef.current = 0;
     touchDraggingRef.current = false;
     clearQueuedPaddleFlush();
@@ -882,24 +877,16 @@ function NetworkedGameView({
             balls: msg.state.balls,
           };
 
-          // --- Own paddle reconciliation ---
-          // Use server position as ground truth. When the player is actively
-          // moving, allow small drift (prediction is close enough). When idle
-          // or drift is large, snap to server to prevent accumulating error.
           serverPaddleRef.current = snap.self.paddleY;
-          if (!touchDraggingRef.current) {
-            const delta = snap.self.paddleY - predictedPaddleRef.current;
-            const absDelta = Math.abs(delta);
-            if (predictedDirRef.current === 0 || absDelta > 5) {
-              // Not moving OR significant drift — snap to server authority
-              predictedPaddleRef.current = snap.self.paddleY;
-            } else if (absDelta > 1) {
-              // Small drift while moving — correct 40% per update for quick convergence
-              predictedPaddleRef.current += delta * 0.4;
-            }
-            // If absDelta <= 1 while moving, prediction is accurate enough — keep it
-            setSelfPaddleLeftOverride(predictedPaddleRef.current);
+          const hasLocalPrediction = predictedTargetPaddleRef.current !== null || predictedDirRef.current !== 0;
+          const delta = snap.self.paddleY - predictedPaddleRef.current;
+          const absDelta = Math.abs(delta);
+          if (!hasLocalPrediction || absDelta >= SELF_PADDLE_SNAP_DISTANCE) {
+            predictedPaddleRef.current = snap.self.paddleY;
+          } else if (absDelta > SELF_PADDLE_BLEND_DISTANCE) {
+            predictedPaddleRef.current += delta * 0.3;
           }
+          setSelfPaddleLeftOverride(predictedPaddleRef.current);
 
           // --- Buffer snapshot for interpolation ---
           const buf = snapshotBufferRef.current;
@@ -971,8 +958,18 @@ function NetworkedGameView({
       const dt = Math.min(50, now - lastTime);
       lastTime = now;
 
-      // 1. Own paddle prediction — advance immediately based on held input
-      if (!touchDraggingRef.current && predictedDirRef.current !== 0) {
+      // 1. Own paddle prediction — advance immediately based on the active control mode
+      if (predictedTargetPaddleRef.current !== null) {
+        const deltaToTarget = predictedTargetPaddleRef.current - predictedPaddleRef.current;
+        const maxStep = PADDLE_SPEED * (dt / 1000);
+        if (Math.abs(deltaToTarget) <= maxStep) {
+          predictedPaddleRef.current = predictedTargetPaddleRef.current;
+        } else {
+          predictedPaddleRef.current += Math.sign(deltaToTarget) * maxStep;
+        }
+        predictedPaddleRef.current = clamp(predictedPaddleRef.current, 0, ARENA_HEIGHT - PADDLE_SIZE);
+        setSelfPaddleLeftOverride(predictedPaddleRef.current);
+      } else if (!touchDraggingRef.current && predictedDirRef.current !== 0) {
         predictedPaddleRef.current = clamp(
           predictedPaddleRef.current + predictedDirRef.current * PADDLE_SPEED * (dt / 1000),
           0,
@@ -1057,6 +1054,7 @@ function NetworkedGameView({
   const onAction = useCallback((action: InputAction) => {
     const ws = wsRef.current;
     if (countdown > 0 || waiting || winner || ws?.readyState !== WebSocket.OPEN) return;
+    predictedTargetPaddleRef.current = null;
     predictedDirRef.current = applyPredictedInputDirection(predictedDirRef.current, action);
     const seq = seqRef.current++;
     ws.send(JSON.stringify({ type: "input", seq, action } satisfies ClientMessage));
@@ -1065,18 +1063,14 @@ function NetworkedGameView({
   const onPaddlePosition = useCallback((paddleLeft: number) => {
     const ws = wsRef.current;
     if (countdown > 0 || waiting || winner || ws?.readyState !== WebSocket.OPEN) return;
-    predictedPaddleRef.current = paddleLeft;
-    setSelfPaddleLeftOverride(paddleLeft);
+    predictedDirRef.current = 0;
+    predictedTargetPaddleRef.current = paddleLeft;
     queuedPaddleLeftRef.current = paddleLeft;
     schedulePaddlePositionFlush();
   }, [countdown, schedulePaddlePositionFlush, waiting, winner]);
 
   const onMobileDraggingChange = useCallback((dragging: boolean) => {
     touchDraggingRef.current = dragging;
-    if (!dragging) {
-      predictedPaddleRef.current = serverPaddleRef.current;
-      setSelfPaddleLeftOverride(serverPaddleRef.current);
-    }
   }, []);
 
   const onPlayAgain = useCallback(() => {

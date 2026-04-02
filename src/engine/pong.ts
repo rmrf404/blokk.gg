@@ -35,6 +35,8 @@ export interface BallState extends SerializedBallState {
 export interface PongPlayerState {
   paddleY: number;
   inputDirection: InputDirection;
+  movementDirection: InputDirection;
+  targetPaddleY: number | null;
   score: number;
   displayName: string;
   isCpu?: boolean;
@@ -88,12 +90,16 @@ export function createMatch(seed: number, topName: string, bottomName: string): 
       top: {
         paddleY: ARENA_HEIGHT / 2 - PADDLE_SIZE / 2,
         inputDirection: 0,
+        movementDirection: 0,
+        targetPaddleY: null,
         score: 0,
         displayName: topName,
       },
       bottom: {
         paddleY: ARENA_HEIGHT / 2 - PADDLE_SIZE / 2,
         inputDirection: 0,
+        movementDirection: 0,
+        targetPaddleY: null,
         score: 0,
         displayName: bottomName,
       },
@@ -165,9 +171,11 @@ export function applyInput(state: PongMatchState, slot: PlayerSlot, action: Inpu
   const player = state.players[slot];
   switch (action) {
     case "move_up_start":
+      player.targetPaddleY = null;
       player.inputDirection = -1;
       return;
     case "move_down_start":
+      player.targetPaddleY = null;
       player.inputDirection = 1;
       return;
     case "move_up_stop":
@@ -183,9 +191,17 @@ export function applyInput(state: PongMatchState, slot: PlayerSlot, action: Inpu
   }
 }
 
-export function setPlayerPaddlePosition(state: PongMatchState, slot: PlayerSlot, paddleY: number) {
+export function setPlayerPaddleTarget(state: PongMatchState, slot: PlayerSlot, paddleY: number) {
   const player = state.players[slot];
   player.inputDirection = 0;
+  player.targetPaddleY = clamp(paddleY, 0, ARENA_HEIGHT - PADDLE_SIZE);
+}
+
+export function setPlayerPaddlePosition(state: PongMatchState, slot: PlayerSlot, paddleY: number) {
+  const player = state.players[slot];
+  player.targetPaddleY = null;
+  player.inputDirection = 0;
+  player.movementDirection = 0;
   player.paddleY = clamp(paddleY, 0, ARENA_HEIGHT - PADDLE_SIZE);
 }
 
@@ -249,11 +265,27 @@ function updatePlayers(state: PongMatchState, deltaMs: number) {
   for (const slot of ["top", "bottom"] as PlayerSlot[]) {
     const player = state.players[slot];
     const speed = player.isCpu ? PADDLE_SPEED * CPU_SPEED_FACTOR : PADDLE_SPEED;
-    player.paddleY = clamp(
-      player.paddleY + player.inputDirection * speed * (deltaMs / 1000),
-      0,
-      ARENA_HEIGHT - PADDLE_SIZE,
-    );
+    const previousY = player.paddleY;
+
+    if (player.targetPaddleY !== null) {
+      const delta = player.targetPaddleY - player.paddleY;
+      const maxStep = speed * (deltaMs / 1000);
+      if (Math.abs(delta) <= maxStep) {
+        player.paddleY = player.targetPaddleY;
+      } else {
+        player.paddleY += Math.sign(delta) * maxStep;
+      }
+      player.paddleY = clamp(player.paddleY, 0, ARENA_HEIGHT - PADDLE_SIZE);
+    } else {
+      player.paddleY = clamp(
+        player.paddleY + player.inputDirection * speed * (deltaMs / 1000),
+        0,
+        ARENA_HEIGHT - PADDLE_SIZE,
+      );
+    }
+
+    const movedBy = player.paddleY - previousY;
+    player.movementDirection = movedBy > 0 ? 1 : movedBy < 0 ? -1 : 0;
   }
 }
 
@@ -270,7 +302,7 @@ function reflectBallFromPaddle(
     BASE_BALL_SPEED,
     MAX_BALL_SPEED,
   );
-  const verticalInfluence = clamp(impact * 0.72 + player.inputDirection * 0.18, -0.82, 0.82);
+  const verticalInfluence = clamp(impact * 0.72 + player.movementDirection * 0.18, -0.82, 0.82);
   const vertical = speed * verticalInfluence;
   const minHorizontalSpeed = speed * 0.6;
   const horizontal = Math.sqrt(Math.max(speed * speed - vertical * vertical, minHorizontalSpeed * minHorizontalSpeed));
@@ -300,6 +332,8 @@ function maybeBounceOnPaddles(
   previousY: number,
   movedX: number,
   movedY: number,
+  previousTopPaddleY: number,
+  previousBottomPaddleY: number,
 ) {
   const leftPlayer = state.players.top;
   const rightPlayer = state.players.bottom;
@@ -318,9 +352,10 @@ function maybeBounceOnPaddles(
   ) {
     const t = (previousX - BALL_RADIUS - leftFrontX) / (previousX - movedX);
     const yAtCross = previousY + (movedY - previousY) * t;
+    const paddleYAtCross = previousTopPaddleY + (leftPlayer.paddleY - previousTopPaddleY) * clamp(t, 0, 1);
     if (
-      yAtCross + BALL_RADIUS + hitTolerance >= leftPlayer.paddleY
-      && yAtCross - BALL_RADIUS - hitTolerance <= leftPlayer.paddleY + PADDLE_SIZE
+      yAtCross + BALL_RADIUS + hitTolerance >= paddleYAtCross
+      && yAtCross - BALL_RADIUS - hitTolerance <= paddleYAtCross + PADDLE_SIZE
     ) {
       ball.y = yAtCross;
       reflectBallFromPaddle(state, ball, "top");
@@ -335,9 +370,10 @@ function maybeBounceOnPaddles(
   ) {
     const t = (rightFrontX - previousX - BALL_RADIUS) / (movedX - previousX);
     const yAtCross = previousY + (movedY - previousY) * t;
+    const paddleYAtCross = previousBottomPaddleY + (rightPlayer.paddleY - previousBottomPaddleY) * clamp(t, 0, 1);
     if (
-      yAtCross + BALL_RADIUS + hitTolerance >= rightPlayer.paddleY
-      && yAtCross - BALL_RADIUS - hitTolerance <= rightPlayer.paddleY + PADDLE_SIZE
+      yAtCross + BALL_RADIUS + hitTolerance >= paddleYAtCross
+      && yAtCross - BALL_RADIUS - hitTolerance <= paddleYAtCross + PADDLE_SIZE
     ) {
       ball.y = yAtCross;
       reflectBallFromPaddle(state, ball, "bottom");
@@ -355,10 +391,19 @@ function awardPoint(state: PongMatchState, slot: PlayerSlot) {
 
   state.balls = [spawnBall(state, slot === "top" ? "bottom" : "top")];
   state.players.top.inputDirection = 0;
+  state.players.top.movementDirection = 0;
+  state.players.top.targetPaddleY = null;
   state.players.bottom.inputDirection = 0;
+  state.players.bottom.movementDirection = 0;
+  state.players.bottom.targetPaddleY = null;
 }
 
-function updateBalls(state: PongMatchState, deltaMs: number) {
+function updateBalls(
+  state: PongMatchState,
+  deltaMs: number,
+  previousTopPaddleY: number,
+  previousBottomPaddleY: number,
+) {
   const nextBalls: BallState[] = [];
 
   for (const ball of state.balls) {
@@ -370,7 +415,16 @@ function updateBalls(state: PongMatchState, deltaMs: number) {
     const movedX = ball.x;
     const movedY = ball.y;
     maybeBounceOnWalls(ball);
-    maybeBounceOnPaddles(state, ball, previousX, previousY, movedX, movedY);
+    maybeBounceOnPaddles(
+      state,
+      ball,
+      previousX,
+      previousY,
+      movedX,
+      movedY,
+      previousTopPaddleY,
+      previousBottomPaddleY,
+    );
 
     if (ball.x + BALL_RADIUS < 0) {
       awardPoint(state, "bottom");
@@ -401,8 +455,10 @@ export function tickMatch(state: PongMatchState, deltaMs: number) {
   }
 
   state.elapsedMs += deltaMs;
+  const previousTopPaddleY = state.players.top.paddleY;
+  const previousBottomPaddleY = state.players.bottom.paddleY;
   updatePlayers(state, deltaMs);
-  updateBalls(state, deltaMs);
+  updateBalls(state, deltaMs, previousTopPaddleY, previousBottomPaddleY);
 
   if (state.balls.length === 0 && !state.winnerSlot) {
     state.balls.push(spawnBall(state));
