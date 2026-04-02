@@ -48,10 +48,10 @@ const INITIAL_PADDLE_Y = ARENA_HEIGHT / 2 - PADDLE_SIZE / 2;
 
 /**
  * Fixed interpolation delay in milliseconds.
- * At 30 Hz broadcast (~33 ms between snapshots) this keeps roughly two
- * snapshots buffered while reducing the local paddle/ball timeslice mismatch.
+ * The server now broadcasts at 60 Hz, so we only keep roughly one snapshot of
+ * delay. This keeps the world visually aligned with the local paddle.
  */
-const INTERPOLATION_DELAY_MS = 66;
+const INTERPOLATION_DELAY_MS = 18;
 const SELF_PADDLE_BLEND_DISTANCE = 1.25;
 const SELF_PADDLE_SNAP_DISTANCE = 10;
 
@@ -727,6 +727,7 @@ function NetworkedGameView({
   const snapshotBufferRef = useRef<TimedSnapshot[]>([]);
   const renderTimeRef = useRef<number | null>(null);
   const gameActiveRef = useRef(false);
+  const serverClockRef = useRef<{ serverTimeMs: number; receivedAtMs: number } | null>(null);
 
   // --- Own paddle prediction ---------------------------------------------------
   const serverPaddleRef = useRef(INITIAL_PADDLE_Y);
@@ -764,6 +765,14 @@ function NetworkedGameView({
     paddleFlushTimeoutRef.current = null;
   }, []);
 
+  const estimateServerTimeMs = useCallback(() => {
+    const clock = serverClockRef.current;
+    if (!clock) {
+      return undefined;
+    }
+    return clock.serverTimeMs + (performance.now() - clock.receivedAtMs);
+  }, []);
+
   const flushQueuedPaddlePosition = useCallback(() => {
     clearQueuedPaddleFlush();
     const ws = wsRef.current;
@@ -774,8 +783,13 @@ function NetworkedGameView({
     const nextSeq = seqRef.current++;
     lastPaddleSendAtRef.current = performance.now();
     pendingPaddleUpdateRef.current = { seq: nextSeq, paddleY };
-    ws.send(JSON.stringify({ type: "paddle_target", seq: nextSeq, paddleY } satisfies ClientMessage));
-  }, [clearQueuedPaddleFlush]);
+    ws.send(JSON.stringify({
+      type: "paddle_target",
+      seq: nextSeq,
+      paddleY,
+      clientTimeMs: estimateServerTimeMs(),
+    } satisfies ClientMessage));
+  }, [clearQueuedPaddleFlush, estimateServerTimeMs]);
 
   const schedulePaddlePositionFlush = useCallback(() => {
     const elapsed = performance.now() - lastPaddleSendAtRef.current;
@@ -795,6 +809,7 @@ function NetworkedGameView({
     queuedPaddleLeftRef.current = null;
     snapshotBufferRef.current = [];
     renderTimeRef.current = null;
+    serverClockRef.current = null;
     serverPaddleRef.current = INITIAL_PADDLE_Y;
     predictedPaddleRef.current = INITIAL_PADDLE_Y;
     predictedTargetPaddleRef.current = null;
@@ -875,6 +890,10 @@ function NetworkedGameView({
             self: msg.state.self,
             opponent: msg.state.opponent,
             balls: msg.state.balls,
+          };
+          serverClockRef.current = {
+            serverTimeMs: msg.state.serverTimeMs,
+            receivedAtMs: performance.now(),
           };
 
           serverPaddleRef.current = snap.self.paddleY;
@@ -1057,8 +1076,13 @@ function NetworkedGameView({
     predictedTargetPaddleRef.current = null;
     predictedDirRef.current = applyPredictedInputDirection(predictedDirRef.current, action);
     const seq = seqRef.current++;
-    ws.send(JSON.stringify({ type: "input", seq, action } satisfies ClientMessage));
-  }, [countdown, waiting, winner]);
+    ws.send(JSON.stringify({
+      type: "input",
+      seq,
+      action,
+      clientTimeMs: estimateServerTimeMs(),
+    } satisfies ClientMessage));
+  }, [countdown, estimateServerTimeMs, waiting, winner]);
 
   const onPaddlePosition = useCallback((paddleLeft: number) => {
     const ws = wsRef.current;

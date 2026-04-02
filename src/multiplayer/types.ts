@@ -39,9 +39,9 @@ export type ClientMessage =
   | { type: "join_queue"; identityToken: string }
   | { type: "join_room"; joinToken: string }
   | { type: "request_rematch" }
-  | { type: "input"; seq: number; action: InputAction }
-  | { type: "paddle_target"; seq: number; paddleY: number }
-  | { type: "paddle_position"; seq: number; paddleY: number };
+  | { type: "input"; seq: number; action: InputAction; clientTimeMs?: number }
+  | { type: "paddle_target"; seq: number; paddleY: number; clientTimeMs?: number }
+  | { type: "paddle_position"; seq: number; paddleY: number; clientTimeMs?: number };
 
 /** Server -> Client messages */
 export type ServerMessage =

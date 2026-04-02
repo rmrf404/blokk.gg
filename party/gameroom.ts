@@ -3,7 +3,8 @@
  * Runs an authoritative match simulation and broadcasts snapshots to clients.
  *
  * Server ticks at 60 Hz for physics accuracy.
- * State is broadcast at 30 Hz (every 2nd tick) for smooth Pong gameplay.
+ * State is broadcast at 60 Hz because paddle-ball interactions are frequent and
+ * the payload is small enough for a 1v1 match.
  */
 
 import { Server, type Connection } from "partyserver";
@@ -82,16 +83,16 @@ export class Gameroom extends Server {
       case "input": {
         if (this.gameOver) return;
         const player = this.players.find((p) => p.conn.id === conn.id);
-        if (!player?.joined || !this.match || !this.isValidInputMessage(msg.seq, msg.action)) return;
-        this.match.enqueueInput(player.slot, msg.seq, msg.action);
+        if (!player?.joined || !this.match || !this.isValidInputMessage(msg.seq, msg.action, msg.clientTimeMs)) return;
+        this.match.enqueueInput(player.slot, msg.seq, msg.action, msg.clientTimeMs);
         break;
       }
       case "paddle_target":
       case "paddle_position": {
         if (this.gameOver) return;
         const player = this.players.find((p) => p.conn.id === conn.id);
-        if (!player?.joined || !this.match || !this.isValidPaddleTargetMessage(msg.seq, msg.paddleY)) return;
-        this.match.enqueuePaddleTarget(player.slot, msg.seq, msg.paddleY);
+        if (!player?.joined || !this.match || !this.isValidPaddleTargetMessage(msg.seq, msg.paddleY, msg.clientTimeMs)) return;
+        this.match.enqueuePaddleTarget(player.slot, msg.seq, msg.paddleY, msg.clientTimeMs);
         break;
       }
     }
@@ -229,7 +230,7 @@ export class Gameroom extends Server {
     if (this.tickInterval || !this.match) return;
     this.tickCount = 0;
     const stepMs = 1000 / 60;
-    const broadcastMs = 1000 / 30;
+    const broadcastMs = stepMs;
     const maxCatchUpSteps = 5;
     let lastLoopAt = performance.now();
     let accumulator = 0;
@@ -435,10 +436,11 @@ export class Gameroom extends Server {
     }
   }
 
-  private isValidInputMessage(seq: number, action: InputAction) {
+  private isValidInputMessage(seq: number, action: InputAction, clientTimeMs?: number) {
     return Number.isInteger(seq)
       && seq >= 0
       && seq <= 10_000_000
+      && this.isValidClientTimeMs(clientTimeMs)
       && (
         action === "move_up_start"
         || action === "move_up_stop"
@@ -447,13 +449,23 @@ export class Gameroom extends Server {
       );
   }
 
-  private isValidPaddleTargetMessage(seq: number, paddleY: number) {
+  private isValidPaddleTargetMessage(seq: number, paddleY: number, clientTimeMs?: number) {
     return Number.isInteger(seq)
       && seq >= 0
       && seq <= 10_000_000
+      && this.isValidClientTimeMs(clientTimeMs)
       && Number.isFinite(paddleY)
       && paddleY >= 0
       && paddleY <= ARENA_HEIGHT - PADDLE_SIZE;
+  }
+
+  private isValidClientTimeMs(clientTimeMs?: number) {
+    return clientTimeMs === undefined
+      || (
+        Number.isFinite(clientTimeMs)
+        && clientTimeMs >= 0
+        && clientTimeMs <= 10_000_000
+      );
   }
 
   private handleRequestRematch(conn: Connection) {
