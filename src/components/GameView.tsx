@@ -1111,6 +1111,58 @@ function NetworkedGameView({
         }),
       };
 
+      // --- Debug: detect issues in real-time ---
+      if (typeof window !== "undefined" && (window as any).__PONG_DEBUG) {
+        const prevSnap = (window as any).__prevRendered as ArenaSnapshot | undefined;
+        if (prevSnap) {
+          // Paddle jump
+          const selfJump = Math.abs(rendered.self.paddleY - prevSnap.self.paddleY);
+          const oppJump = Math.abs(rendered.opponent.paddleY - prevSnap.opponent.paddleY);
+          if (selfJump > 5) console.warn(`[PONG] Self paddle jump: ${selfJump.toFixed(1)}`);
+          if (oppJump > 5) console.warn(`[PONG] Opponent paddle jump: ${oppJump.toFixed(1)}`);
+
+          // Ball through paddle
+          for (const ball of rendered.balls) {
+            const pb = prevSnap.balls.find((b) => b.id === ball.id);
+            if (!pb) continue;
+            if (pb.x > leftLimit + 1 && ball.x < leftLimit - 1 && ball.vx <= 0) {
+              console.warn(`[PONG] Ball crossed LEFT paddle: x ${pb.x.toFixed(1)}->${ball.x.toFixed(1)}`);
+            }
+            if (pb.x < rightLimit - 1 && ball.x > rightLimit + 1 && ball.vx >= 0) {
+              console.warn(`[PONG] Ball crossed RIGHT paddle: x ${pb.x.toFixed(1)}->${ball.x.toFixed(1)}`);
+            }
+          }
+
+          // Ball bounce off nothing
+          for (const ball of rendered.balls) {
+            const pb = prevSnap.balls.find((b) => b.id === ball.id);
+            if (!pb) continue;
+            if (pb.vx < 0 && ball.vx > 0) {
+              // Bounced off left paddle — check if self paddle was there
+              const padY = selfPaddleLeftOverride ?? rendered.self.paddleY;
+              const ballInPaddle = ball.y >= padY - 2 && ball.y <= padY + PADDLE_SIZE + 2;
+              if (!ballInPaddle) {
+                console.warn(`[PONG] Ball bounced LEFT but paddle not covering! ball.y=${ball.y.toFixed(1)} pad=${padY.toFixed(1)}-${(padY + PADDLE_SIZE).toFixed(1)}`);
+              }
+            }
+          }
+
+          // Score change
+          const prevScore = prevSnap.self.score + prevSnap.opponent.score;
+          const currScore = rendered.self.score + rendered.opponent.score;
+          if (currScore > prevScore) {
+            console.log(`[PONG] SCORE: ${rendered.self.score}-${rendered.opponent.score}`);
+          }
+        }
+        // Paddle prediction vs server
+        const drift = Math.abs((selfPaddleLeftOverride ?? rendered.self.paddleY) - serverPaddleRef.current);
+        if (drift > 5) {
+          console.warn(`[PONG] Paddle drift: predicted=${(selfPaddleLeftOverride ?? 0).toFixed(1)} server=${serverPaddleRef.current.toFixed(1)} drift=${drift.toFixed(1)}`);
+        }
+
+        (window as any).__prevRendered = rendered;
+      }
+
       setSnapshot(rendered);
       animFrame = requestAnimationFrame(loop);
     };
